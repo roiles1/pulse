@@ -117,7 +117,7 @@ def try_realtime():
     try:
         os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(60))
         print("[rt] SCHED_FIFO priority 60 set")
-    except PermissionError:
+    except (PermissionError, AttributeError):  # AttributeError: macOS has no sched_setscheduler
         print("[rt] WARNING: no permission for real-time priority.")
         print("     For best results run:  sudo python3 chirp_tx.py ...")
 

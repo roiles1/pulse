@@ -47,7 +47,9 @@ TOL_DUTY_REL = 0.30
 TOL_BW_REL = 0.25
 TOL_CARRIER_HZ = 150e3      # covers B206 (2 ppm) + HackRF (20 ppm) + estimator bias
 CW_MAX_SWEEP_HZ = 1e6       # a "CW" pulse must sweep less than this
-PRESENCE_FACTOR = 6.0       # peak must exceed this x noise floor to count as signal
+PRESENCE_FACTOR = 4.0       # peak must exceed this x noise floor to count as signal
+                            # (was 6.0; lowered for the weak bench link -- the >20
+                            # hot-sample cluster requirement still rejects noise)
 
 
 # ---------------- DSP helpers ----------------
