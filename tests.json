@@ -1,0 +1,80 @@
+{
+  "comment": "Shared test sequence for the B206mini TX (run_test_sequence.py on the Pi) and the HackRF verifier (hackrf_verify.py on the Mac). ORDER MATTERS and must be identical on both sides. rx_offset shifts the HackRF center away from the carrier (used for CW so the tone is not buried in the HackRF DC spike). checks lists which measurements are pass/fail for that test.",
+  "carrier": 1000000000.0,
+  "tx_seconds": 10.0,
+  "gap_seconds": 6.0,
+  "tests": [
+    {
+      "name": "cw_pulse",
+      "desc": "BW=0: unmodulated CW pulse at the carrier",
+      "chirp_bw": 0.0,
+      "prf": 1000.0,
+      "pulse_len": 30e-6,
+      "rx_offset": -1000000.0,
+      "checks": ["prf", "width", "duty", "cw", "carrier"]
+    },
+    {
+      "name": "chirp_full_bw",
+      "desc": "Full 20 MHz upchirp, nominal PRF/pulse",
+      "chirp_bw": 20e6,
+      "prf": 1000.0,
+      "pulse_len": 30e-6,
+      "rx_offset": 0.0,
+      "checks": ["prf", "width", "duty", "bw", "carrier"]
+    },
+    {
+      "name": "chirp_mid_bw",
+      "desc": "Intermediate 10 MHz upchirp",
+      "chirp_bw": 10e6,
+      "prf": 1000.0,
+      "pulse_len": 30e-6,
+      "rx_offset": 0.0,
+      "checks": ["prf", "width", "duty", "bw", "carrier"]
+    },
+    {
+      "name": "min_prf",
+      "desc": "PRF at lower limit (333 Hz)",
+      "chirp_bw": 20e6,
+      "prf": 333.0,
+      "pulse_len": 30e-6,
+      "rx_offset": 0.0,
+      "checks": ["prf", "width", "duty", "bw", "carrier"]
+    },
+    {
+      "name": "max_pulse_min_prf",
+      "desc": "Longest pulse (50 us) at min PRF",
+      "chirp_bw": 20e6,
+      "prf": 333.0,
+      "pulse_len": 50e-6,
+      "rx_offset": 0.0,
+      "checks": ["prf", "width", "duty", "bw", "carrier"]
+    },
+    {
+      "name": "max_prf_min_duty",
+      "desc": "Max PRF (2 kHz) at 1% duty (5 us pulse)",
+      "chirp_bw": 20e6,
+      "prf": 2000.0,
+      "pulse_len": 5e-6,
+      "rx_offset": 0.0,
+      "checks": ["prf", "width", "duty", "bw", "carrier"]
+    },
+    {
+      "name": "max_duty",
+      "desc": "Max PRF (2 kHz) at 10% duty (50 us pulse) — heaviest case",
+      "chirp_bw": 20e6,
+      "prf": 2000.0,
+      "pulse_len": 50e-6,
+      "rx_offset": 0.0,
+      "checks": ["prf", "width", "duty", "bw", "carrier"]
+    },
+    {
+      "name": "min_pulse",
+      "desc": "Shortest pulse (0.3 us, ~6 RX samples) — detection only, chirp not measurable",
+      "chirp_bw": 20e6,
+      "prf": 2000.0,
+      "pulse_len": 0.3e-6,
+      "rx_offset": 0.0,
+      "checks": ["prf", "width"]
+    }
+  ]
+}
