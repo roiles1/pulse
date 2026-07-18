@@ -59,32 +59,41 @@ def parse_args():
                    help="UHD device args")
     p.add_argument("--setup-check", action="store_true",
                    help="initialize device and streamer, then exit WITHOUT transmitting")
+    p.add_argument("--extended", action="store_true",
+                   help="lift the validated parameter ranges (duty <1%% / >10%%, wider "
+                        "PRF/pulse); only physical limits remain (pulse fits PRI, BW <= rate)")
     return p.parse_args()
 
 
 def validate_pulse_params(a):
-    """Returns pulse_len (s). Errors on out-of-range inputs, warns on derived values."""
+    """Returns pulse_len (s). Errors on out-of-range inputs, warns on derived values.
+    With --extended the validated ranges become warnings; only physical limits
+    (pulse fits PRI, BW <= rate, checked elsewhere) still abort."""
+    fail = (lambda msg: print(f"[extended] {msg}")) if a.extended else sys.exit
     if not (BW_MIN <= a.chirp_bw <= BW_MAX):
-        sys.exit(f"chirp BW {a.chirp_bw/1e6:.2f} MHz outside device range "
-                 f"{BW_MIN/1e6:.0f}..{BW_MAX/1e6:.0f} MHz (0 = CW pulse)")
+        fail(f"chirp BW {a.chirp_bw/1e6:.2f} MHz outside device range "
+             f"{BW_MIN/1e6:.0f}..{BW_MAX/1e6:.0f} MHz (0 = CW pulse)")
     if not (PRF_MIN <= a.prf <= PRF_MAX):
-        sys.exit(f"PRF {a.prf} Hz outside device range {PRF_MIN:.0f}..{PRF_MAX:.0f} Hz")
+        fail(f"PRF {a.prf} Hz outside device range {PRF_MIN:.0f}..{PRF_MAX:.0f} Hz")
 
     if a.duty is not None:
         if not (DUTY_MIN <= a.duty <= DUTY_MAX):
-            sys.exit(f"duty {a.duty} outside device range {DUTY_MIN}..{DUTY_MAX}")
+            fail(f"duty {a.duty} outside device range {DUTY_MIN}..{DUTY_MAX}")
         pulse_len = a.duty / a.prf
         if not (PULSE_MIN <= pulse_len <= PULSE_MAX):
-            sys.exit(f"duty {a.duty*100:.1f}% at PRF {a.prf:.0f} Hz needs a "
-                     f"{pulse_len*1e6:.1f} us pulse — outside "
-                     f"{PULSE_MIN*1e6}..{PULSE_MAX*1e6} us. Pick a different PRF/duty combo.")
+            fail(f"duty {a.duty*100:.1f}% at PRF {a.prf:.0f} Hz needs a "
+                 f"{pulse_len*1e6:.1f} us pulse — outside "
+                 f"{PULSE_MIN*1e6}..{PULSE_MAX*1e6} us. Pick a different PRF/duty combo.")
     else:
         pulse_len = a.pulse_len
         if not (PULSE_MIN <= pulse_len <= PULSE_MAX):
-            sys.exit(f"pulse length {pulse_len*1e6:.2f} us outside device range "
-                     f"{PULSE_MIN*1e6}..{PULSE_MAX*1e6} us")
+            fail(f"pulse length {pulse_len*1e6:.2f} us outside device range "
+                 f"{PULSE_MIN*1e6}..{PULSE_MAX*1e6} us")
 
     duty = pulse_len * a.prf
+    if duty >= 1.0:
+        sys.exit(f"duty {duty*100:.1f}% >= 100%: pulse ({pulse_len*1e6:.2f} us) "
+                 f"does not fit the PRI at PRF {a.prf:.0f} Hz")
     if not (DUTY_MIN <= duty <= DUTY_MAX):
         print(f"[warn] derived duty cycle {duty*100:.3f}% is outside the 1..10% range "
               f"(pulse {pulse_len*1e6:.2f} us x PRF {a.prf:.0f} Hz)")

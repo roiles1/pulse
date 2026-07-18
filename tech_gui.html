@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LFM Pulse — Technician Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --txt:#e6edf3; --dim:#8b949e;
+    --acc:#58a6ff; --ok:#3fb950; --warn:#d29922; --err:#f85149; --ext:#bc8cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:14px/1.45 -apple-system,"Segoe UI",Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:14px 22px;
+         border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:17px;margin:0;font-weight:600}
+  #statebadge{padding:3px 12px;border-radius:20px;font-weight:700;font-size:12px;
+              background:#21262d;color:var(--dim);letter-spacing:.5px}
+  #statebadge.tx{background:#0d2818;color:var(--ok);box-shadow:0 0 8px #3fb95055}
+  #statebadge.starting{background:#2b2111;color:var(--warn)}
+  #statebadge.err{background:#2d1214;color:var(--err)}
+  main{display:grid;grid-template-columns:390px 1fr;gap:16px;padding:16px 22px;
+       max-width:1450px;margin:0 auto}
+  @media(max-width:1000px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:16px 18px}
+  .card h2{margin:0 0 12px;font-size:13px;text-transform:uppercase;
+           letter-spacing:1px;color:var(--dim)}
+  .row{display:flex;align-items:center;gap:10px;margin:10px 0}
+  .row label{flex:0 0 130px;color:var(--dim)}
+  .row input[type=number],.row select{
+    flex:1;background:#0d1117;border:1px solid var(--line);border-radius:6px;
+    color:var(--txt);padding:7px 9px;font:inherit;min-width:0}
+  .row .unit{flex:0 0 40px;color:var(--dim);font-size:12px}
+  input[type=range]{width:100%;accent-color:var(--acc)}
+  .dutywrap{margin:4px 0 2px}
+  .dutyscale{display:flex;justify-content:space-between;font-size:11px;
+             color:var(--dim);margin-top:2px}
+  .zone{font-size:12px;padding:2px 8px;border-radius:10px;display:inline-block}
+  .zone.std{background:#0d2818;color:var(--ok)}
+  .zone.ext{background:#231a33;color:var(--ext)}
+  .derived{font-size:12px;color:var(--dim);margin:6px 0 2px}
+  .btns{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap}
+  button{border:1px solid var(--line);border-radius:7px;padding:9px 15px;
+         font:inherit;font-weight:600;cursor:pointer;background:#21262d;color:var(--txt)}
+  button:hover{border-color:var(--acc)}
+  button:disabled{opacity:.4;cursor:default}
+  button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
+  button.reflash{background:#3a2a55;border-color:var(--ext);color:var(--ext)}
+  button.stop{background:#3d1418;border-color:var(--err);color:var(--err)}
+  #msg{margin-top:11px;font-size:13px;min-height:18px;white-space:pre-wrap}
+  #msg.err{color:var(--err)} #msg.ok{color:var(--ok)} #msg.warn{color:var(--warn)}
+  #txmeta{font-size:13px;color:var(--dim);margin-top:8px}
+  #txmeta b{color:var(--txt)}
+  #log{background:#0d1117;border:1px solid var(--line);border-radius:7px;
+       font:11px/1.5 ui-monospace,Menlo,monospace;color:var(--dim);
+       padding:8px 10px;margin-top:10px;height:92px;overflow-y:auto;
+       white-space:pre-wrap;word-break:break-all}
+  canvas{width:100%;height:300px;background:#0a0e14;border:1px solid var(--line);
+         border-radius:8px;display:block}
+  .specbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .specbar label{color:var(--dim);font-size:13px}
+  .specbar input[type=number],.specbar select{
+    background:#0d1117;border:1px solid var(--line);border-radius:6px;
+    color:var(--txt);padding:6px 8px;font:inherit;width:105px}
+  .specbar select{width:auto}
+  #measure{display:flex;gap:22px;margin-top:10px;font-size:13px;flex-wrap:wrap}
+  #measure .m b{display:block;font-size:17px;font-weight:700;color:var(--acc)}
+  #measure .m span{color:var(--dim);font-size:11px;letter-spacing:.5px}
+  #clipwarn{color:var(--err);font-weight:700;display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>LFM Pulse — Technician Console</h1>
+  <span id="statebadge">IDLE</span>
+  <span id="usrpinfo" style="color:var(--dim);font-size:12px"></span>
+  <span style="flex:1"></span>
+  <button id="probe" style="padding:5px 12px;font-size:12px">Probe USRP</button>
+</header>
+<main>
+  <section class="card">
+    <h2>LFM pulse block</h2>
+    <div class="row"><label>Carrier</label>
+      <input id="freq" type="number" value="1000" step="0.1" min="70" max="6000">
+      <span class="unit">MHz</span></div>
+    <div class="row"><label>Chirp bandwidth</label>
+      <input id="bw" type="number" value="20" step="0.5" min="0" max="20">
+      <span class="unit">MHz</span></div>
+    <div class="row"><label>PRF</label>
+      <input id="prf" type="number" value="1000" step="1" min="10" max="100000">
+      <span class="unit">Hz</span></div>
+    <div class="row"><label>Duty cycle</label>
+      <input id="duty" type="number" value="3" step="any" min="0.001" max="95">
+      <span class="unit">%</span></div>
+    <div class="dutywrap">
+      <input id="dutyslider" type="range" min="0" max="1000" value="620">
+      <div class="dutyscale"><span>0.01%</span><span>0.1%</span><span>1%</span>
+        <span>10%</span><span>95%</span></div>
+    </div>
+    <div class="derived">pulse length = <b id="pulselen">30.00</b> µs
+      &nbsp;·&nbsp; <span id="dutyzone" class="zone std">validated range (1–10%)</span></div>
+    <div class="row"><label>TX gain</label>
+      <input id="gain" type="number" value="60" step="0.25" min="0" max="89.75">
+      <span class="unit">dB</span></div>
+    <div class="row"><label>Baseband amp</label>
+      <input id="amp" type="number" value="0.7" step="0.05" min="0.05" max="1">
+      <span class="unit">0–1</span></div>
+    <div class="btns">
+      <button id="flash" class="primary">⚡ Flash &amp; Transmit</button>
+      <button id="reflash" class="reflash" disabled>🔁 Update &amp; Re-flash</button>
+      <button id="stop" class="stop" disabled>⏹ Stop</button>
+    </div>
+    <div id="msg"></div>
+    <div id="txmeta"></div>
+    <div id="log"></div>
+  </section>
+
+  <section class="card">
+    <h2>HackRF spectrum</h2>
+    <div class="specbar">
+      <button id="specbtn">📡 Open spectrum</button>
+      <label><input id="follow" type="checkbox" checked> follow carrier</label>
+      <label>Center <input id="speccenter" type="number" value="1000" step="0.1"> MHz</label>
+      <label>LNA <select id="lna"><option>0</option><option>8</option><option>16</option>
+        <option selected>24</option><option>32</option><option>40</option></select></label>
+      <label>VGA <select id="vga"><option>8</option><option>14</option><option>20</option>
+        <option selected>26</option><option>32</option><option>38</option>
+        <option>44</option><option>52</option><option>62</option></select></label>
+      <button id="peakreset" style="font-size:12px;padding:6px 10px">reset peak</button>
+      <span id="clipwarn">⚠ ADC CLIP — lower gains</span>
+    </div>
+    <canvas id="spec" width="1040" height="300"></canvas>
+    <div id="measure">
+      <div class="m"><b id="m_prf">—</b><span>PRF Hz</span></div>
+      <div class="m"><b id="m_w">—</b><span>Width µs</span></div>
+      <div class="m"><b id="m_duty">—</b><span>Duty %</span></div>
+      <div class="m"><b id="m_snr">—</b><span>SNR dB</span></div>
+      <div class="m"><b id="m_n">—</b><span>Pulses</span></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const DUTY_MIN = 0.01, DUTY_MAX = 95;
+
+/* ---- duty slider (log scale) <-> number ---- */
+function sliderToDuty(v){
+  return DUTY_MIN * Math.pow(DUTY_MAX/DUTY_MIN, v/1000);
+}
+function dutyToSlider(d){
+  return Math.round(1000 * Math.log(d/DUTY_MIN) / Math.log(DUTY_MAX/DUTY_MIN));
+}
+function fmtDuty(d){ return d >= 1 ? d.toFixed(2) : d.toPrecision(3); }
+function refreshDerived(){
+  const duty = parseFloat($('duty').value) || 0;
+  const prf = parseFloat($('prf').value) || 1;
+  const pl = duty/100/prf*1e6;
+  $('pulselen').textContent = pl >= 100 ? pl.toFixed(1) : pl.toFixed(2);
+  const z = $('dutyzone');
+  if (duty >= 1 && duty <= 10){
+    z.className = 'zone std'; z.textContent = 'validated range (1–10%)';
+  } else {
+    z.className = 'zone ext';
+    z.textContent = 'EXTENDED — outside validated 1–10%';
+  }
+}
+$('dutyslider').oninput = () => {
+  $('duty').value = fmtDuty(sliderToDuty(+$('dutyslider').value));
+  refreshDerived();
+};
+$('duty').oninput = () => {
+  const d = parseFloat($('duty').value);
+  if (d > 0) $('dutyslider').value = dutyToSlider(Math.min(DUTY_MAX, Math.max(DUTY_MIN, d)));
+  refreshDerived();
+};
+$('prf').oninput = refreshDerived;
+refreshDerived();
+
+/* ---- TX control ---- */
+function params(){
+  return {freq_mhz:+$('freq').value, bw_mhz:+$('bw').value, prf_hz:+$('prf').value,
+          duty_pct:+$('duty').value, gain:+$('gain').value, amp:+$('amp').value};
+}
+function setMsg(text, cls){ const m = $('msg'); m.textContent = text; m.className = cls||''; }
+async function post(path, body){
+  const r = await fetch(path, {method:'POST', body:JSON.stringify(body||{})});
+  return r.json();
+}
+async function doFlash(){
+  setMsg('flashing USRP…','warn');
+  $('flash').disabled = $('reflash').disabled = true;
+  try{
+    const r = await post('/api/flash', params());
+    if (r.ok) setMsg(r.pending ? r.note : 'transmitting','ok');
+    else setMsg((r.error||'failed') + (r.detail ? '\n' + r.detail.slice(-350) : ''),'err');
+  }catch(e){ setMsg('server unreachable: '+e,'err'); }
+}
+$('flash').onclick = doFlash;
+$('reflash').onclick = doFlash;      // update params & flash again = same flow
+$('stop').onclick = async () => { setMsg('stopping…',''); await post('/api/stop'); setMsg('stopped',''); };
+$('probe').onclick = async () => {
+  $('usrpinfo').textContent = 'probing…';
+  try{
+    const r = await post('/api/probe');
+    $('usrpinfo').textContent = !r.ok ? r.error
+      : (r.found ? '● USRP connected ' + (r.serial||'') : '○ no USRP detected');
+  }catch(e){ $('usrpinfo').textContent = 'probe failed'; }
+};
+
+/* ---- status poll ---- */
+async function poll(){
+  try{
+    const s = await (await fetch('/api/status')).json();
+    const b = $('statebadge');
+    if (s.tx){ b.textContent = 'TRANSMITTING'; b.className = 'tx'; }
+    else if (s.starting){ b.textContent = 'FLASHING…'; b.className = 'starting'; }
+    else if ((s.detail||'').startsWith('transmitter stopped')){
+      b.textContent = 'ERROR'; b.className = 'err'; setMsg(s.detail,'err');
+    } else { b.textContent = 'IDLE'; b.className = ''; }
+    $('stop').disabled = !(s.tx || s.starting);
+    $('reflash').disabled = !(s.tx || s.starting);
+    $('flash').disabled = !!s.starting;
+    if (s.tx && s.params){
+      $('txmeta').innerHTML =
+        `on air: <b>${s.params.freq_mhz} MHz</b> · BW <b>${s.params.bw_mhz} MHz</b>` +
+        ` · PRF <b>${s.params.prf_hz} Hz</b> · duty <b>${s.params.duty_pct}%</b>` +
+        ` (pulse ${s.params.pulse_us.toFixed(2)} µs) · gain ${s.params.gain} dB` +
+        (s.sent_s != null ? ` · <b>${s.sent_s.toFixed(0)} s</b> sent` : '') +
+        (s.underflows != null ? ` · underflows <b>${s.underflows}</b>` : '');
+    } else if (!s.starting) $('txmeta').textContent = '';
+    if (s.detail && (s.tx || s.starting)){
+      $('log').textContent = s.detail; $('log').scrollTop = 1e9;
+    }
+  }catch(e){ /* server gone */ }
+  setTimeout(poll, 1000);
+}
+poll();
+
+/* ---- spectrum ---- */
+let specOn = false, peak = null, yLo = null, yHi = null;
+const cv = $('spec'), ctx = cv.getContext('2d');
+$('peakreset').onclick = () => { peak = null; };
+$('specbtn').onclick = () => {
+  specOn = !specOn;
+  $('specbtn').textContent = specOn ? '⏸ Close spectrum' : '📡 Open spectrum';
+  if (specOn){ peak = null; specLoop(); }
+};
+async function specLoop(){
+  while (specOn){
+    if ($('follow').checked) $('speccenter').value = $('freq').value;
+    const q = `center_mhz=${+$('speccenter').value}&lna=${$('lna').value}&vga=${$('vga').value}`;
+    try{
+      const r = await (await fetch('/api/spectrum?'+q)).json();
+      if (r.ok) draw(r); else drawText(r.error||'capture failed');
+    }catch(e){ drawText('server unreachable'); }
+    await new Promise(res => setTimeout(res, 120));
+  }
+}
+function drawText(t){
+  ctx.fillStyle = '#0a0e14'; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.fillStyle = '#f85149'; ctx.font = '15px sans-serif';
+  ctx.fillText(t, 20, cv.height/2);
+}
+function draw(r){
+  const db = r.db, W = cv.width, H = cv.height;
+  if (!peak || peak.length !== db.length) peak = db.slice();
+  else for (let i=0;i<db.length;i++) if (db[i] > peak[i]) peak[i] = db[i];
+  // smooth autoscale
+  const sorted = db.slice().sort((a,b)=>a-b);
+  const lo = sorted[Math.floor(db.length*0.06)] - 6;
+  const hi = Math.max(...peak) + 6;
+  yLo = yLo === null ? lo : yLo*0.85 + lo*0.15;
+  yHi = yHi === null ? hi : yHi*0.85 + hi*0.15;
+  const y = v => H - (v - yLo)/(yHi - yLo)*H;
+  const xs = i => i/(db.length-1)*W;
+  ctx.fillStyle = '#0a0e14'; ctx.fillRect(0,0,W,H);
+  // dB grid
+  ctx.strokeStyle = '#1c2330'; ctx.fillStyle = '#495568'; ctx.font = '10px monospace';
+  for (let g = Math.ceil(yLo/10)*10; g < yHi; g += 10){
+    ctx.beginPath(); ctx.moveTo(0,y(g)); ctx.lineTo(W,y(g)); ctx.stroke();
+    ctx.fillText(g.toFixed(0)+' dB', 6, y(g)-3);
+  }
+  // freq gridlines every rate/8
+  const span = r.rate/1e6;
+  for (let k=1;k<8;k++){
+    const x = k/8*W;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+    const f = r.center_mhz - span/2 + k/8*span;
+    ctx.fillText(f.toFixed(1), x-16, H-5);
+  }
+  // peak hold
+  ctx.strokeStyle = '#3a2a55'; ctx.beginPath();
+  peak.forEach((v,i)=> i ? ctx.lineTo(xs(i),y(v)) : ctx.moveTo(xs(i),y(v)));
+  ctx.stroke();
+  // live trace
+  ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 1.4; ctx.beginPath();
+  db.forEach((v,i)=> i ? ctx.lineTo(xs(i),y(v)) : ctx.moveTo(xs(i),y(v)));
+  ctx.stroke(); ctx.lineWidth = 1;
+  // center marker
+  ctx.strokeStyle = '#d2992255'; ctx.beginPath();
+  ctx.moveTo(W/2,0); ctx.lineTo(W/2,H); ctx.stroke();
+  $('clipwarn').style.display = r.clip >= 127 ? 'inline' : 'none';
+  const p = r.pulse;
+  $('m_prf').textContent = p ? p.prf_hz : '—';
+  $('m_w').textContent = p ? p.width_us : '—';
+  $('m_duty').textContent = p ? p.duty_pct : '—';
+  $('m_snr').textContent = r.snr_db;
+  $('m_n').textContent = p ? p.n : '—';
+}
+</script>
+</body>
+</html>

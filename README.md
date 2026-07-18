@@ -118,6 +118,23 @@ duty ±30 %, BW ±25 % + sweep must be positive (upchirp), carrier within
   live run may need `--lna/--vga` tuning. Start with defaults; if SNR
   printed per test is < 20 dB, raise gains or move antennas closer.
 
+## Technician GUI (Mac)
+
+Browser console for the LFM pulse block with **extended duty range**
+(below 1% and above 10% — the validated 1–10% band is marked in the UI):
+
+```bash
+~/radioconda/bin/python3 tech_gui.py     # or double-click TechGUI.command
+# -> http://localhost:8800
+```
+
+- **Flash & Transmit** starts `chirp_tx.py --extended`; **Update & Re-flash**
+  stops the running TX and flashes again with the edited parameters.
+- Live **HackRF spectrum** in the browser (canvas + peak hold), with a blind
+  pulse measurement readout (PRF / width / duty / SNR) under the plot.
+- TX status shows seconds sent + underflow count; UHD errors (e.g. USRP
+  unplugged) surface directly in the page.
+
 ## Gotchas learned the hard way
 
 - **USB 2 before firmware**: the B206mini's Cypress FX3 bootloader is
