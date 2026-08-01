@@ -61,7 +61,7 @@ B206_PY = _pick_python("PULSE_B206_PY",
 LIMITS = {
     "freq_mhz": (70.0, 6000.0),      # B206mini tuning range
     "bw_mhz":   (0.0, 20.0),         # validated chirp BW cap
-    "prf_hz":   (10.0, 100000.0),
+    "prf_hz":   (1.0, 333000.0),
     "duty_pct": (0.001, 95.0),       # extended: below 1% and above 10% allowed
     "gain":     (0.0, 89.75),
     "amp":      (0.05, 1.0),
@@ -379,15 +379,27 @@ def main():
                 signal.signal(sig, cleanup)
             except (ValueError, OSError):
                 pass
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    # 0.0.0.0: reachable from other machines on the bench LAN (e.g. server on
+    # the Pi, browser on the Mac at http://<pi-ip>:8800)
+    srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     url = f"http://localhost:{PORT}"
     print(f"[tech-gui] serving {url}  (Ctrl-C to quit)")
+    try:
+        import socket
+        lan_ip = socket.gethostbyname(socket.gethostname())
+        if not lan_ip.startswith("127."):
+            print(f"[tech-gui] LAN access: http://{lan_ip}:{PORT}")
+    except OSError:
+        pass
     print(f"[tech-gui] TX python: {B206_PY}")
     print("[tech-gui] TX stops automatically when this window is closed.")
     # auto-open the browser only for interactive terminal launches
-    if (sys.platform == "darwin" and sys.stdout.isatty()
-            and os.environ.get("TECH_GUI_NO_OPEN") != "1"):
-        subprocess.Popen(["open", url])
+    if sys.stdout.isatty() and os.environ.get("TECH_GUI_NO_OPEN") != "1":
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", url])
+        elif shutil.which("xdg-open"):   # Linux desktop (Raspberry Pi)
+            subprocess.Popen(["xdg-open", url],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     srv.serve_forever()
 
 
