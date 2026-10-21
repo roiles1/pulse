@@ -193,6 +193,8 @@ def parse_tx_stats():
             try:
                 sent = float(line.split("s sent")[0].split("]")[1])
                 under = int(line.split("underflows:")[1].split("|")[0])
+                if "late:" in line:   # burst mode: dropped (late) pulses count too
+                    under += int(line.split("late:")[1].split("|")[0])
             except (IndexError, ValueError):
                 pass
             break
