@@ -11,6 +11,7 @@ Ctrl-C leaves the pin LOW.
     python3 gpio_find.py --all      # walk GPIO_0..7, 3 s each, prints which is high
 """
 import argparse
+import signal
 import time
 
 import uhd
@@ -21,6 +22,10 @@ p.add_argument("--hz", type=float, default=1.0)
 p.add_argument("--all", action="store_true")
 p.add_argument("--args", default="")
 a = p.parse_args()
+
+def _stop(*_):
+    raise KeyboardInterrupt
+signal.signal(signal.SIGTERM, _stop)   # kill/systemd also leaves pins LOW
 
 usrp = uhd.usrp.MultiUSRP(a.args)
 banks = list(usrp.get_gpio_banks(0))
