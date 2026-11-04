@@ -13,6 +13,9 @@ Serves tech_gui.html at http://localhost:8800 and drives the hardware:
     GET  /api/spectrum?center_mhz=&lna=&vga=  -> one HackRF capture: spectrum dB
                                             bins + blind pulse measurement
 
+PA gate: optional per-pulse SSPA gate on a B206mini GPIO pin (chirp_tx.py --gate).
+Operator sets the length factor; synch delay / pin / skew are developer settings.
+
 Extended ranges: duty below 1% and above 10% are allowed (chirp_tx.py --extended);
 only physical limits remain (pulse fits PRI, BW <= rate, duty < 100%).
 
@@ -67,6 +70,15 @@ LIMITS = {
     "amp":      (0.05, 1.0),
 }
 TX_RATE = 25e6
+
+# PA gate (SSPA) limits. lead/skew are developer-only in the page.
+GATE_LIMITS = {
+    "gate_factor":  (1.0, 20.0),     # gate length / RF pulse length
+    "gate_lead_us": (0.0, 20.0),     # synch delay: gate opens before RF
+    "gate_skew_ns": (-2000.0, 2000.0),  # ATR->DAC calibration offset
+    "gate_pin":     (0, 7),
+}
+GATE_MAX_PRF = 2500.0                # one timed burst per pulse (chirp_tx default)
 
 state = {"tx": None, "params": None, "streaming": False}
 hackrf_lock = threading.Lock()
@@ -146,6 +158,31 @@ def validate(p):
     if out["bw_mhz"] * 1e6 > TX_RATE:
         return None, f"chirp BW {out['bw_mhz']} MHz exceeds TX rate {TX_RATE/1e6} MS/s"
     out["pulse_us"] = pulse_us
+
+    out["gate"] = bool(p.get("gate"))
+    if out["gate"]:
+        for k, (lo, hi) in GATE_LIMITS.items():
+            try:
+                v = float(p[k])
+            except (KeyError, TypeError, ValueError):
+                return None, f"missing/bad gate parameter: {k}"
+            if not (lo <= v <= hi):
+                return None, f"{k}={v} outside allowed range {lo}..{hi}"
+            out[k] = v
+        out["gate_pin"] = int(out["gate_pin"])
+        if out["prf_hz"] > GATE_MAX_PRF:
+            return None, (f"PA gate needs one burst per pulse: PRF max "
+                          f"{GATE_MAX_PRF:.0f} Hz with gate on")
+        gate_us = out["gate_factor"] * pulse_us
+        lead = out["gate_lead_us"] + out["gate_skew_ns"] / 1000
+        if lead + pulse_us > gate_us + 1e-9:
+            return None, (f"gate {gate_us:.2f} us too short for lead {lead:.2f} us "
+                          f"+ pulse {pulse_us:.2f} us — raise length factor to "
+                          f">= {(lead + pulse_us) / pulse_us:.2f}")
+        if gate_us > 1e6 / out["prf_hz"] - 1.0:
+            return None, "gate does not fit the PRI (needs >= 1 us gate-low)"
+        out["gate_us"] = gate_us
+        out["gate_duty_pct"] = gate_us * out["prf_hz"] / 1e4
     return out, None
 
 
@@ -165,6 +202,12 @@ def flash_tx(p):
            "--pulse-len", f"{params['pulse_us']}e-6",
            "--gain", str(params["gain"]),
            "--amp", str(params["amp"])]
+    if params["gate"]:
+        cmd += ["--gate",
+                "--gate-pin", str(params["gate_pin"]),
+                "--gate-factor", str(params["gate_factor"]),
+                "--gate-lead", f"{params['gate_lead_us']}e-6",
+                "--gate-skew", f"{params['gate_skew_ns']}e-9"]
     log = open(TX_LOG, "w")
     state["tx"] = subprocess.Popen(cmd, cwd=HERE, stdout=log, stderr=log)
     state["params"] = params

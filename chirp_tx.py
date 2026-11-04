@@ -26,6 +26,19 @@ Two TX modes (--mode):
          drops and SHIFTS pulses and can chop them, which on a detector looks
          like missing pulses plus odd partial pulses in between.
 
+PA gate (--gate, burst mode only):
+  The SSPA needs a TTL gate that opens BEFORE the RF and wraps it. Each burst is
+  padded with zeros: [lead zeros][RF pulse][tail zeros]. The FPGA's ATR drives a
+  GPIO pin high while the radio is transmitting a burst, so the gate covers the
+  whole padded burst and the RF sits inside it, `--gate-lead` after the gate
+  edge. Timing is set by the FPGA clock (40 ns steps at 25 MS/s), not the host.
+    gate length  = --gate-factor x pulse length
+    RF starts      --gate-lead after the gate opens
+    tail         = gate length - lead - pulse   (must be >= 0)
+  B206mini GPIO: 12-pin J5 PicoBlade, GPIO_0 = pin 2, GND = pin 6, 3.3 V logic,
+  max ~5 mA per pin -> buffer it if the SSPA gate input draws more.
+  The gate is forced LOW at startup and on exit.
+
 Underrun-avoidance measures (both modes):
   - large USB send-frame pool via device args
   - SCHED_FIFO real-time priority if permitted (run with sudo or chrt -f)
@@ -77,7 +90,81 @@ def parse_args():
     p.add_argument("--extended", action="store_true",
                    help="lift the validated parameter ranges (duty <1%% / >10%%, wider "
                         "PRF/pulse); only physical limits remain (pulse fits PRI, BW <= rate)")
+    g = p.add_argument_group("PA gate (burst mode)")
+    g.add_argument("--gate", action="store_true",
+                   help="drive a per-pulse PA gate on a USRP GPIO pin (ATR)")
+    g.add_argument("--gate-pin", type=int, default=0,
+                   help="GPIO index 0..7 (B206mini J5: GPIO_0 = pin 2)")
+    g.add_argument("--gate-lead", type=float, default=2e-6,
+                   help="synch delay: gate opens this long before the RF, s")
+    g.add_argument("--gate-factor", type=float, default=1.5,
+                   help="gate length / RF pulse length")
+    g.add_argument("--gate-skew", type=float, default=0.0,
+                   help="calibration: extra RF delay vs gate to cancel the fixed "
+                        "ATR-to-DAC pipeline offset measured on a scope, s (+/-)")
+    g.add_argument("--gate-min-off", type=float, default=1e-6,
+                   help="minimum gate-low time between pulses, s")
     return p.parse_args()
+
+
+def gate_plan(a, pulse_len, n_pulse, n_pri, rate):
+    """Sample counts for [lead][pulse][tail]. Exits on an impossible gate."""
+    if not 0 <= a.gate_pin <= 7:
+        sys.exit(f"--gate-pin {a.gate_pin} outside 0..7")
+    if a.gate_factor < 1.0:
+        sys.exit(f"--gate-factor {a.gate_factor} < 1: the gate must be at least "
+                 f"as long as the RF pulse")
+    n_lead = int(round((a.gate_lead + a.gate_skew) * rate))
+    n_gate = int(round(a.gate_factor * pulse_len * rate))
+    if n_lead < 0:
+        sys.exit("gate lead + skew is negative: RF would start before the gate")
+    n_tail = n_gate - n_lead - n_pulse
+    if n_tail < 0:
+        need = (n_lead + n_pulse) / (n_pulse)
+        sys.exit(f"gate too short: lead {n_lead/rate*1e6:.2f} us + pulse "
+                 f"{n_pulse/rate*1e6:.2f} us > gate {n_gate/rate*1e6:.2f} us. "
+                 f"Raise --gate-factor to >= {need:.2f} or lower --gate-lead.")
+    n_off = n_pri - n_gate
+    if n_off < a.gate_min_off * rate:
+        sys.exit(f"gate {n_gate/rate*1e6:.2f} us leaves only {n_off/rate*1e6:.2f} us "
+                 f"gate-low in the {n_pri/rate*1e6:.2f} us PRI "
+                 f"(min {a.gate_min_off*1e6:.2f} us). Lower factor/PRF.")
+    return n_lead, n_tail, n_gate
+
+
+def gpio_bank(usrp):
+    banks = list(usrp.get_gpio_banks(0))
+    for b in ("FP0", "GPIO"):
+        if b in banks:
+            return b
+    if not banks:
+        sys.exit("this USRP reports no GPIO banks — cannot gate")
+    return banks[0]
+
+
+def gate_setup(usrp, pin):
+    """Pin under ATR: high only while TX is active. Starts LOW."""
+    bank, m = gpio_bank(usrp), 1 << pin
+    usrp.set_gpio_attr(bank, "CTRL", 0, m)      # manual first ...
+    usrp.set_gpio_attr(bank, "DDR", m, m)       # ... as output
+    usrp.set_gpio_attr(bank, "OUT", 0, m)       # ... driven low
+    usrp.set_gpio_attr(bank, "ATR_0X", 0, m)    # idle      -> low
+    usrp.set_gpio_attr(bank, "ATR_RX", 0, m)    # RX only   -> low
+    usrp.set_gpio_attr(bank, "ATR_TX", m, m)    # TX only   -> HIGH
+    usrp.set_gpio_attr(bank, "ATR_XX", m, m)    # full dup  -> HIGH
+    usrp.set_gpio_attr(bank, "CTRL", m, m)      # hand the pin to ATR
+    print(f"[gate] bank {bank} GPIO_{pin} under ATR (high during TX bursts)")
+    return bank
+
+
+def gate_safe_low(usrp, bank, pin):
+    try:
+        m = 1 << pin
+        usrp.set_gpio_attr(bank, "CTRL", 0, m)
+        usrp.set_gpio_attr(bank, "OUT", 0, m)
+        print(f"[gate] GPIO_{pin} forced LOW")
+    except Exception as e:  # never mask the real exit reason
+        print(f"[gate] WARNING: could not force gate low: {e}")
 
 
 def validate_pulse_params(a):
@@ -137,9 +224,16 @@ def make_pulse_buffer(rate, bw, pulse_len, prf, amp):
     return np.tile(pri, reps).reshape(1, -1), n_pulse, n_pri, pri
 
 
-def make_burst(pri, n_pulse, n_pri, prf, max_burst_rate):
+def make_burst(pri, n_pulse, n_pri, prf, max_burst_rate, gate=None):
     """Burst = M consecutive PRIs, the trailing zeros of the last PRI dropped.
-    Returns (burst (1,N) array, M). M=1 means the burst is just the pulse."""
+    Returns (burst (1,N) array, M). M=1 means the burst is just the pulse.
+    With gate=(n_lead, n_tail, _): one pulse per burst, zero-padded
+    [lead][pulse][tail] so the ATR gate wraps the RF."""
+    if gate:
+        n_lead, n_tail = gate[0], gate[1]
+        b = np.zeros(n_lead + n_pulse + n_tail, np.complex64)
+        b[n_lead:n_lead + n_pulse] = pri[:n_pulse]
+        return b.reshape(1, -1), 1
     m = max(1, int(np.ceil(prf / max_burst_rate)))
     reps = np.tile(pri, m)
     burst = reps[: (m - 1) * n_pri + n_pulse]
@@ -196,7 +290,29 @@ def main():
           f"| duty {actual_prf*actual_pl*100:.2f}% | {mod} "
           f"| buffer {buf.shape[1]} samp ({buf.shape[1]/actual_rate*1e3:.1f} ms)")
 
+    gate = None
+    if a.gate:
+        if a.mode != "burst":
+            sys.exit("--gate needs --mode burst (stream mode never goes idle, "
+                     "so the ATR gate would stay high)")
+        if actual_prf > a.max_burst_rate:
+            sys.exit(f"--gate needs one burst per pulse: PRF {actual_prf:.0f} Hz > "
+                     f"--max-burst-rate {a.max_burst_rate:.0f}. Lower PRF or raise "
+                     f"--max-burst-rate (host must keep up, else pulses drop as 'late').")
+        n_lead, n_tail, n_gate = gate_plan(a, actual_pl, n_pulse, n_pri, actual_rate)
+        bank = gate_setup(usrp, a.gate_pin)
+        gate = (n_lead, n_tail, bank)
+        pa_duty = n_gate / n_pri * 100
+        print(f"[gate] gate {n_gate/actual_rate*1e6:.2f} us | RF at +"
+              f"{n_lead/actual_rate*1e6:.2f} us | tail {n_tail/actual_rate*1e6:.2f} us "
+              f"| gate duty {pa_duty:.2f}%")
+        if pa_duty > DUTY_MAX * 100:
+            print(f"[warn] gate (PA) duty {pa_duty:.2f}% exceeds {DUTY_MAX*100:.0f}% "
+                  f"— check the SSPA duty limit")
+
     if a.setup_check:
+        if gate:
+            gate_safe_low(usrp, gate[2], a.gate_pin)
         print("[setup-check] device + streamer OK, exiting without transmitting.")
         return
 
@@ -207,8 +323,13 @@ def main():
     signal.signal(signal.SIGTERM, stop)
 
     if a.mode == "burst":
-        run_burst(a, usrp, streamer, pri, n_pulse, n_pri, actual_rate, actual_prf,
-                  actual_pl, running)
+        try:
+            run_burst(a, usrp, streamer, pri, n_pulse, n_pri, actual_rate, actual_prf,
+                      actual_pl, running, gate)
+        finally:
+            if gate:
+                time.sleep(0.3)          # let the last scheduled bursts drain
+                gate_safe_low(usrp, gate[2], a.gate_pin)
     else:
         run_stream(a, streamer, buf, actual_rate, actual_prf, actual_pl, running)
 
@@ -255,10 +376,10 @@ def run_stream(a, streamer, buf, actual_rate, actual_prf, actual_pl, running):
 
 
 def run_burst(a, usrp, streamer, pri, n_pulse, n_pri, actual_rate, actual_prf,
-              actual_pl, running):
+              actual_pl, running, gate=None):
     """Timed bursts: every burst is scheduled at an exact sample index on the
     device clock, so pulse spacing is set by the FPGA, not by the host."""
-    burst, m = make_burst(pri, n_pulse, n_pri, actual_prf, a.max_burst_rate)
+    burst, m = make_burst(pri, n_pulse, n_pri, actual_prf, a.max_burst_rate, gate)
     period = m * n_pri                       # samples between burst starts
     lead = int(0.25 * actual_rate)           # schedule this far ahead of "now"
 
@@ -319,7 +440,8 @@ def run_burst(a, usrp, streamer, pri, n_pulse, n_pri, actual_rate, actual_prf,
 
     print(f"RESULT mode=burst prf={a.prf:.0f}Hz pulse={actual_pl*1e6:.2f}us "
           f"duty={actual_prf*actual_pl*100:.2f}% sent={j*period/actual_rate:.1f}s "
-          f"underflows={underflows} late={late} other={other_events + short_sends}")
+          f"underflows={underflows} late={late} other={other_events + short_sends}"
+          + (" gate=on" if gate else ""))
 
 if __name__ == "__main__":
     main()
