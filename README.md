@@ -170,7 +170,9 @@ RF          ┌─────────────┐
 | Calibration skew | developer | `--gate-skew` | 0 |
 | GPIO pin | developer | `--gate-pin` | 0 |
 
-Wiring (B206mini J5, 12-pin PicoBlade): **GPIO_0 = pin 2, GND = pin 6**.
+Wiring (B206mini J5, 12-pin PicoBlade): **GPIO_0 = pin 2, GND = pin 6** at the
+radio end. On the 12-pin cable / adapter board, find the wire with
+`python3 gpio_find.py` (toggles GPIO_0 at 1 Hz, no RF).
 3.3 V logic, max ~5 mA per pin — use a buffer/driver if the SSPA gate input
 needs 5 V TTL or more current. The gate is forced LOW at startup and exit.
 

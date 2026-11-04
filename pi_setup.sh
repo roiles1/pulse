@@ -49,7 +49,7 @@ else
     git clone -b "$BRANCH" https://github.com/roiles1/pulse "$DIR"
 fi
 cd "$DIR"
-chmod +x usb_check.sh pi_setup.sh run_gui.sh
+chmod +x usb_check.sh pi_setup.sh run_gui.sh gpio_find.py
 
 echo "== 5/6 CPU governor + USB 3"
 echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null
